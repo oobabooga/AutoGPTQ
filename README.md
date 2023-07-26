@@ -29,8 +29,11 @@ The porting approach is greatly inspired by [WapaMario63/GPTQ-for-LLaMa-ROCm](ht
 
 I get `43.18 tokens/s` for 7B models on a RX 7900 XTX.
 
+*<center>📣 Long time no see! 👋 Architecture upgrade, performance optimization and more new features will come in July and August, stay tune! 🥂</center>*
+
 ## News or Update
 
+- 2023-07-26 - (Update) - An elegant [PPL benchmark script](examples/benchmark/perplexity.py) to get results that can be fairly compared with other libraries such as `llama.cpp`.
 - 2023-06-05 - (Update) - Integrate with 🤗 peft to use gptq quantized model to train adapters, support LoRA, AdaLoRA, AdaptionPrompt, etc.
 - 2023-05-30 - (Update) - Support download/upload quantized model from/to 🤗 Hub.
 - 2023-05-27 - (Update) - Support quantization and inference for `gpt_bigcode`, `codegen` and `RefineWeb/RefineWebModel`(falcon) model types.

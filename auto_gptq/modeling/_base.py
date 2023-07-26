@@ -446,6 +446,7 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
         repo_id: str,
         save_dir: Optional[str] = None,
         use_safetensors: Optional[bool] = True,
+        safetensors_metadata: Optional[Dict[str, str]] = None,
         commit_message: Optional[str] = "Upload of AutoGPTQ quantized model",
         use_auth_token: Optional[Union[bool, str]] = None,
         private: Optional[bool] = None,
@@ -465,6 +466,10 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
             use_safetensors (`bool`, *optional*):
                 Save the model using `safetensors`.
                 If the model has already been saved, this parameter can be omitted.
+            safetensors_metadata: (`dict`, *optional*, defaults to `None`):
+                Pass optional metadata dictionary to be saved in the `safetensors` model file(s).
+                Metadata is optional and is purely for informational purposes. It does not affect inference.
+                If `None`, no metadata will be saved.
             commit_message (`str`, *optional*, defaults to `"Upload tool"`):
                 Message to commit while pushing.
             use_auth_token (`bool` or `str`, *optional*):
@@ -484,7 +489,7 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
         
         if save_dir is not None:
             logger.info(f"Saving model to {save_dir}")
-            self.save_quantized(save_dir, use_safetensors)
+            self.save_quantized(save_dir, use_safetensors, safetensors_metadata)
 
         repo_url = create_repo(
             repo_id=repo_id, token=token, private=private, exist_ok=True, repo_type="model"
@@ -507,7 +512,7 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
                 repo_type="model",
             )
 
-    def save_quantized(self, save_dir: str, use_safetensors: bool = False):
+    def save_quantized(self, save_dir: str, use_safetensors: bool = False, safetensors_metadata: Optional[Dict[str, str]] = None):
         """save quantized model and configs to local disk"""
         os.makedirs(save_dir, exist_ok=True)
 
@@ -521,7 +526,42 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
             model_save_name = model_base_name + ".safetensors"
             state_dict = self.model.state_dict()
             state_dict = {k: v.clone().contiguous() for k, v in state_dict.items()}
-            safe_save(state_dict, join(save_dir, model_save_name))
+            if safetensors_metadata is None:
+                safetensors_metadata = {}
+            elif not isinstance(safetensors_metadata, dict):
+                raise TypeError("safetensors_metadata must be a dictionary.")
+            else:
+                logger.debug(f"Received safetensors_metadata: {safetensors_metadata}")
+                new_safetensors_metadata = {}
+                converted_keys = False
+                for key, value in safetensors_metadata.items():
+                    if not isinstance(key, str) or not isinstance(value, str):
+                        converted_keys = True
+                        try:
+                            new_key = str(key)
+                            new_value = str(value)
+                        except Exception as e:
+                            raise TypeError(f"safetensors_metadata: both keys and values must be strings and an error occured when trying to convert them: {e}")
+                        if new_key in new_safetensors_metadata:
+                            logger.warning(f"After converting safetensors_metadata keys to strings, the key '{new_key}' is duplicated. Ensure that all your metadata keys are strings to avoid overwriting.")
+                        new_safetensors_metadata[new_key] = new_value
+                safetensors_metadata = new_safetensors_metadata
+                if converted_keys:
+                    logger.debug(f"One or more safetensors_metadata keys or values had to be converted to str(). Final safetensors_metadata: {safetensors_metadata}")
+
+            # Format is required to enable Accelerate to load the metadata
+            # otherwise it raises an OSError
+            safetensors_metadata['format'] = "pt"
+
+            # Store the quantization configuration as safetensors metadata
+            from auto_gptq import __version__
+            safetensors_metadata['auto_gptq_version'] = str(__version__)
+            safetensors_metadata['gptq_bits'] = str(self.quantize_config.bits)
+            safetensors_metadata['gptq_group_size'] = str(self.quantize_config.group_size)
+            safetensors_metadata['gptq_desc_act'] = str(self.quantize_config.desc_act)
+            safetensors_metadata['gptq_damp_percent'] = str(self.quantize_config.damp_percent)
+
+            safe_save(state_dict, join(save_dir, model_save_name), safetensors_metadata)
         else:
             model_save_name = model_base_name + ".bin"
             torch.save(self.model.state_dict(), join(save_dir, model_save_name))
@@ -531,10 +571,10 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
         self.quantize_config.model_name_or_path = save_dir
         self.quantize_config.model_file_base_name = model_base_name
 
-    def save_pretrained(self, save_dir: str, use_safetensors: bool = False, **kwargs):
+    def save_pretrained(self, save_dir: str, use_safetensors: bool = False, safetensors_metadata: Optional[Dict[str, str]] = None, **kwargs):
         """alias of save_quantized"""
         logger.warning("you are using save_pretrained, which will re-direct to save_quantized.")
-        self.save_quantized(save_dir, use_safetensors)
+        self.save_quantized(save_dir, use_safetensors, safetensors_metadata)
 
     @classmethod
     def from_pretrained(
@@ -558,7 +598,29 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
         torch.nn.init.uniform_ = skip
         torch.nn.init.normal_ = skip
 
-        config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
+        # Parameters related to loading from Hugging Face Hub
+        cache_dir = model_init_kwargs.pop("cache_dir", None)
+        force_download = model_init_kwargs.pop("force_download", False)
+        resume_download = model_init_kwargs.pop("resume_download", False)
+        proxies = model_init_kwargs.pop("proxies", None)
+        local_files_only = model_init_kwargs.pop("local_files_only", False)
+        use_auth_token = model_init_kwargs.pop("use_auth_token", None)
+        revision = model_init_kwargs.pop("revision", None)
+        subfolder = model_init_kwargs.pop("subfolder", "")
+        commit_hash = model_init_kwargs.pop("_commit_hash", None)
+
+        cached_file_kwargs = {
+            "cache_dir": cache_dir,
+            "force_download": force_download,
+            "proxies": proxies,
+            "resume_download": resume_download,
+            "local_files_only": local_files_only,
+            "use_auth_token": use_auth_token,
+            "revision": revision,
+            "subfolder": subfolder,
+        }
+
+        config = AutoConfig.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True, **cached_file_kwargs)
         if config.model_type not in SUPPORTED_MODELS:
             raise TypeError(f"{config.model_type} isn't supported yet.")
 
@@ -594,7 +656,9 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
 
         torch.cuda.empty_cache()
 
-        model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path, **model_init_kwargs)
+        merged_kwargs = {**model_init_kwargs, **cached_file_kwargs}
+        model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path, **merged_kwargs)
+
         model_config = model.config.to_dict()
         seq_len_keys = ["max_position_embeddings", "seq_length", "n_positions"]
         if any([k in model_config for k in seq_len_keys]):
@@ -612,8 +676,7 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
     @classmethod
     def from_quantized(
         cls,
-        model_name_or_path: Optional[str] = None,
-        save_dir: Optional[str] = None,
+        model_name_or_path: Optional[str],
         device_map: Optional[Union[str, Dict[str, Union[int, str]]]] = None,
         max_memory: Optional[dict] = None,
         device: Optional[Union[str, int]] = None,
@@ -644,20 +707,25 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
         subfolder = kwargs.pop("subfolder", "")
         commit_hash = kwargs.pop("_commit_hash", None)
 
+        cached_file_kwargs = {
+            "cache_dir": cache_dir,
+            "force_download": force_download,
+            "proxies": proxies,
+            "resume_download": resume_download,
+            "local_files_only": local_files_only,
+            "use_auth_token": use_auth_token,
+            "revision": revision,
+            "subfolder": subfolder,
+            "_raise_exceptions_for_missing_entries": False,
+            "_commit_hash": commit_hash,
+        }
+            
         if use_triton and not TRITON_AVAILABLE:
             logger.warning("triton is not installed, reset use_triton to False")
             use_triton = False
 
         # == step1: prepare configs and file names == #
-        if model_name_or_path and save_dir:
-            logger.warning("save_dir will be ignored because model_name_or_path is explicit specified.")
-        if not model_name_or_path and save_dir:
-            model_name_or_path = save_dir
-            warnings.warn("save_dir is deprecated and will be removed in version 0.3.0", PendingDeprecationWarning, stacklevel=2)
-        if not model_name_or_path and not save_dir:
-            raise ValueError("at least one of model_name_or_path or save_dir should be specified.")
-        
-        config = AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=trust_remote_code)
+        config = AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=trust_remote_code, **cached_file_kwargs)
 
         if config.model_type not in SUPPORTED_MODELS:
             raise TypeError(f"{config.model_type} isn't supported yet.")
@@ -686,25 +754,11 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
         resolved_archive_file = None
         if is_local:
             model_save_name = join(model_name_or_path, model_basename)
-
             for ext in extensions:
                 if isfile(model_save_name + ext):
                     resolved_archive_file = model_save_name + ext
                     break
         else: # remote
-            cached_file_kwargs = {
-                "cache_dir": cache_dir,
-                "force_download": force_download,
-                "proxies": proxies,
-                "resume_download": resume_download,
-                "local_files_only": local_files_only,
-                "use_auth_token": use_auth_token,
-                "revision": revision,
-                "subfolder": subfolder,
-                "_raise_exceptions_for_missing_entries": False,
-                "_commit_hash": commit_hash,
-            }
-            
             for ext in extensions:
                 resolved_archive_file = cached_file(model_name_or_path, model_basename + ext, **cached_file_kwargs)
                 if resolved_archive_file is not None:
