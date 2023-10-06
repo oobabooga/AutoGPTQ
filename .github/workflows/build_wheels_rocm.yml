@@ -1,103 +1,108 @@
 name: Build AutoGPTQ Wheels with ROCm
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag of AutoGPTQ to build: v0.4.2'
+        default: 'main'
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version tag of AutoGPTQ to build: v0.4.2'
+        default: 'main'
+        required: true
+        type: string
+
+permissions:
+  contents: write
 
 jobs:
   build_wheels:
-    if: ${{ github.repository_owner == 'PanQiWei' }}
-
+    name: Build wheels for ${{ matrix.os }} and Python ${{ matrix.python }} and RoCm ${{ matrix.rocm }}
+    runs-on: ubuntu-20.04
     strategy:
       matrix:
-        os: [ubuntu-20.04]
-        python: ["3.8", "3.9", "3.10", "3.11"]
-        rocm: ["5.4.2"]  # , "5.5", "5.6"]
-
-    name: Build wheels for ${{ matrix.os }} and Python ${{ matrix.python }} and RoCm ${{ matrix.rocm }}
-    runs-on: ${{ matrix.os }}
-
+        pyver: ["3.8", "3.9", "3.10", "3.11"]
+        rocm: ['5.4.2', '5.5', '5.6']
     defaults:
       run:
-        shell: bash
+        shell: pwsh
+    env:
+      ROCM_VERSION: ${{ matrix.rocm }}
 
     steps:
-      - uses: actions/checkout@v3
-
-      - name: Free disk space
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@v1.2.0
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          swap-storage: false
+    
+      - uses: actions/checkout@v4
+        with:
+          repository: 'PanQiWei/AutoGPTQ'
+          ref: ${{ inputs.version }}
+          
+      - name: Install ROCm SDK
+        shell: bash
         run: |
-          df -h
-          echo "Removing large packages"
-          sudo apt-get remove -y '^dotnet-.*'
-          sudo apt-get remove -y 'php.*'
-          sudo apt-get remove -y azure-cli google-cloud-sdk google-chrome-stable firefox powershell mono-devel
-          df -h
-          sudo apt-get autoremove -y >/dev/null 2>&1
-          sudo apt-get clean
-          sudo apt-get autoremove -y >/dev/null 2>&1
-          sudo apt-get autoclean -y >/dev/null 2>&1
-          df -h
-          echo "https://github.com/actions/virtual-environments/issues/709"
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
-          df -h
-          echo "remove big /usr/local"
-          sudo rm -rf "/usr/local/share/boost"
-          sudo rm -rf /usr/local/lib/android >/dev/null 2>&1
-          df -h
-          sudo rm -rf /usr/share/dotnet/sdk > /dev/null 2>&1
-          sudo rm -rf /usr/share/dotnet/shared > /dev/null 2>&1
-          sudo rm -rf /usr/share/swift > /dev/null 2>&1
-          df -h
-
+          [ ! -d /etc/apt/keyrings ] && sudo mkdir --parents --mode=0755 /etc/apt/keyrings
+          wget https://repo.radeon.com/rocm/rocm.gpg.key -O - | gpg --dearmor | sudo tee /etc/apt/keyrings/rocm.gpg > /dev/null
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/$ROCM_VERSION focal main" | sudo tee --append /etc/apt/sources.list.d/rocm.list
+          echo -e 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600' | sudo tee /etc/apt/preferences.d/rocm-pin-600
+          sudo apt update
+          sudo apt install rocm-dev rocsparse-dev rocprim-dev rocthrust-dev rocblas-dev hipblas-dev hipcub-dev hipsparse-dev -y
+          echo "/opt/rocm/bin" >> $GITHUB_PATH
+          echo "ROCM_PATH=/opt/rocm" >> $GITHUB_ENV
+          echo "USE_ROCM=1" >> $GITHUB_ENV
+          
       - uses: actions/setup-python@v3
         with:
-          python-version: ${{ matrix.python }}
-
-      - name: Setup Miniconda
-        uses: conda-incubator/setup-miniconda@v2.2.0
-        with:
-          activate-environment: "build"
-          python-version: ${{ matrix.python }}
-          mamba-version: "*"
-          use-mamba: false
-          channels: conda-forge,defaults
-          channel-priority: true
-          add-pip-as-python-dependency: true
-          auto-activate-base: false
-
-      - name: Set up environment
+          python-version: ${{ matrix.pyver }}
+          
+      - name: Install Dependencies
         run: |
-          echo "Using python:"
-          python --version
-          which python
-
-          if [[ "${{ matrix.rocm }}" == "5.4.2" ]]; then
-            export ROCM_DL_FILE=amdgpu-install_5.4.50402-1_all.deb
-          elif [[ "${{ matrix.rocm }}" == "5.5" ]]; then
-            export ROCM_DL_FILE=amdgpu-install_5.5.50500-1_all.deb
-          else
-            export ROCM_DL_FILE=amdgpu-install_5.6.50600-1_all.deb
-          fi
-
-          curl -O https://repo.radeon.com/amdgpu-install/${{ matrix.rocm }}/ubuntu/focal/$ROCM_DL_FILE
-          sudo dpkg -i $ROCM_DL_FILE
-          sudo DEBIAN_FRONTEND=noninteractive amdgpu-install --usecase=rocm --no-dkms --no-32 -y
-
-      - name: Install dependencies
+          $packages = 'build wheel safetensors sentencepiece ninja'
+          $torver = if ([version]$env:ROCM_VERSION -lt [version]'5.5') {'2.0.1'} else {'2.1.0'}
+          $packages += " torch==$torver+rocm$env:ROCM_VERSION torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/rocm$env:ROCM_VERSION"
+          
+          pip3 install $packages.split(' ')
+        
+      - name: Build Wheel
+        id: build-wheel
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends rocsparse-dev rocthrust-dev rocblas-dev hipblas-dev hipsparse-dev
-
-          python -m pip install --upgrade build setuptools wheel ninja
-          python -m pip install torch --index-url https://download.pytorch.org/whl/rocm${{ matrix.rocm }}
-
-      - name: Build wheels
-        run: |
-          echo "Using python for build:"
-          python --version
-          which python
-
-          ROCM_VERSION=${{ matrix.rocm }} python setup.py sdist bdist_wheel
+          if ($(Get-Content 'setup.py' -raw) -match '"version": "(\d+\.(?:\d+\.?(?:dev\d+)?)*)",')
+          {
+              Write-Output $('::notice file=build-wheels-release.yml,title=Package Version::Detected package version is: {0}' -f $Matches[1])
+              Write-Output "PACKAGE_VERSION=$($Matches[1])" >> "$env:GITHUB_OUTPUT"
+          } else {
+              Write-Output '::error file=build-wheels-release.yml::Could not parse version from setup.py! You must upload wheels manually!'
+              Write-Output "PACKAGE_VERSION=None" >> "$env:GITHUB_OUTPUT"
+          }
+          
+          $env:PYTORCH_ROCM_ARCH = 'gfx803;gfx900;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102'
+          if ([version]$env:ROCM_VERSION -lt [version]'5.5') {$env:PYTORCH_ROCM_ARCH = 'gfx803;gfx900;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx1010;gfx1012;gfx1030'}
+          
+          python setup.py sdist bdist_wheel
 
       - uses: actions/upload-artifact@v3
         with:
           name: 'linux-rocm-wheels'
           path: ./dist/*.whl
+          
+      - name: Upload files to a GitHub release
+        if: steps.build-wheel.outputs.PACKAGE_VERSION != 'None' && !contains( 'dev', steps.build-wheel.outputs.PACKAGE_VERSION )
+        uses: svenstaro/upload-release-action@2.6.1
+        continue-on-error: true
+        with:
+          file: ./dist/*.whl
+          tag: ${{ format('v{0}', steps.build-wheel.outputs.PACKAGE_VERSION) }}
+          file_glob: true
+          overwrite: true
+          release_name: ${{ format('v{0}', steps.build-wheel.outputs.PACKAGE_VERSION) }}
