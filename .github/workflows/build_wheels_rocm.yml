@@ -89,6 +89,10 @@ jobs:
           $env:PYTORCH_ROCM_ARCH = 'gfx803;gfx900;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102'
           if ([version]$env:ROCM_VERSION -lt [version]'5.5') {$env:PYTORCH_ROCM_ARCH = 'gfx803;gfx900;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx1010;gfx1012;gfx1030'}
           
+          $setup = Get-Content setup.py -raw
+          $macroString = "extra_link_args=extra_link_args,`n            define_macros=[('HIPBLAS_USE_HIP_HALF', '1')]"
+          New-Item setup.py -itemType File -value $setup.replace('extra_link_args=extra_link_args', $macroString) -force
+          
           python setup.py sdist bdist_wheel
 
       - uses: actions/upload-artifact@v3
