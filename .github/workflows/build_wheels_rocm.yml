@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag of AutoGPTQ to build: v0.4.2'
+        description: 'Version tag of AutoGPTQ to build: v0.5.1'
         default: 'main'
         required: true
         type: string
@@ -68,7 +68,7 @@ jobs:
           
       - name: Install Dependencies
         run: |
-          $packages = 'build wheel safetensors sentencepiece ninja'
+          $packages = 'build wheel safetensors sentencepiece ninja numpy gekko pandas'
           $torver = if ([version]$env:ROCM_VERSION -lt [version]'5.5') {'2.0.1'} else {'2.1.0'}
           $packages += " torch==$torver+rocm$env:ROCM_VERSION torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/rocm$env:ROCM_VERSION"
           
@@ -81,17 +81,22 @@ jobs:
           {
               Write-Output $('::notice file=build-wheels-release.yml,title=Package Version::Detected package version is: {0}' -f $Matches[1])
               Write-Output "PACKAGE_VERSION=$($Matches[1])" >> "$env:GITHUB_OUTPUT"
+              $PCKG_VERSION = "$($Matches[1])"
           } else {
               Write-Output '::error file=build-wheels-release.yml::Could not parse version from setup.py! You must upload wheels manually!'
               Write-Output "PACKAGE_VERSION=None" >> "$env:GITHUB_OUTPUT"
+              $PCKG_VERSION = $false
           }
           
           $env:PYTORCH_ROCM_ARCH = 'gfx803;gfx900;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102'
           if ([version]$env:ROCM_VERSION -lt [version]'5.5') {$env:PYTORCH_ROCM_ARCH = 'gfx803;gfx900;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx1010;gfx1012;gfx1030'}
           
-          $setup = Get-Content setup.py -raw
-          $macroString = "extra_link_args=extra_link_args,`n            define_macros=[('HIPBLAS_USE_HIP_HALF', '1')]"
-          New-Item setup.py -itemType File -value $setup.replace('extra_link_args=extra_link_args', $macroString) -force
+          if ([version]$PCKG_VERSION -lt [version]'0.5.0')
+          {
+              $setup = Get-Content setup.py -raw
+              $macroString = "extra_link_args=extra_link_args,`n            define_macros=[('HIPBLAS_USE_HIP_HALF', '1')]"
+              New-Item setup.py -itemType File -value $setup.replace('extra_link_args=extra_link_args', $macroString) -force
+          }
           
           python setup.py sdist bdist_wheel
 

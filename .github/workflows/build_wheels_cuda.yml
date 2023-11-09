@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag of AutoGPTQ to build: v0.4.2'
+        description: 'Version tag of AutoGPTQ to build: v0.5.1'
         default: 'main'
         required: true
         type: string
@@ -66,7 +66,7 @@ jobs:
           
           if ([version]$env:CUDAVER -lt [version]'11.8.0') {$torch = "torch==2.0.1"} else {$torch = "torch==2.1.0"}
           
-          python -m pip install --upgrade build setuptools wheel ninja $torch --extra-index-url "https://download.pytorch.org/whl/cu$cudaVersionPytorch"
+          python -m pip install --upgrade build setuptools wheel ninja numpy gekko pandas $torch --extra-index-url "https://download.pytorch.org/whl/cu$cudaVersionPytorch"
 
       - name: Build Wheel
         id: build-wheel
@@ -83,9 +83,6 @@ jobs:
           $env:CUDA_PATH = $env:CONDA_PREFIX
           $env:CUDA_HOME = $env:CONDA_PREFIX
           if ($IsLinux) {$env:LD_LIBRARY_PATH = $env:CONDA_PREFIX + '/lib:' + $env:LD_LIBRARY_PATH}
-          
-          # TODO: remove this
-          if (!$IsLinux) {$env:INCLUDE_EXLLAMA_KERNELS = 0}
           
           $env:TORCH_CUDA_ARCH_LIST = if ([version]$env:CUDAVER -lt [version]'11.8.0') {'6.0 6.1 7.0 7.5 8.0 8.6+PTX'} else {'6.0 6.1 7.0 7.5 8.0 8.6 8.9 9.0+PTX'}
           
