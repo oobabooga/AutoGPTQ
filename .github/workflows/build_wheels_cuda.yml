@@ -35,7 +35,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: 'PanQiWei/AutoGPTQ'
+          repository: 'AutoGPTQ/AutoGPTQ'
           ref: ${{ inputs.version }}
 
       - uses: actions/setup-python@v4

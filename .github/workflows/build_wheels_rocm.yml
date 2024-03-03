@@ -46,7 +46,7 @@ jobs:
     
       - uses: actions/checkout@v4
         with:
-          repository: 'PanQiWei/AutoGPTQ'
+          repository: 'AutoGPTQ/AutoGPTQ'
           ref: ${{ inputs.version }}
           
       - name: Install ROCm SDK
