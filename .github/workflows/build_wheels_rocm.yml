@@ -69,7 +69,7 @@ jobs:
       - name: Install Dependencies
         run: |
           $packages = 'build wheel safetensors sentencepiece ninja numpy gekko pandas'
-          $torver = if ([version]$env:ROCM_VERSION -lt [version]'5.5') {'2.0.1'} else {'2.1.0'}
+          $torver = if ([version]$env:ROCM_VERSION -lt [version]'5.5') {'2.0.1'} else {'2.2.1'}
           $packages += " torch==$torver+rocm$env:ROCM_VERSION torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/rocm$env:ROCM_VERSION"
           
           pip3 install $packages.split(' ')

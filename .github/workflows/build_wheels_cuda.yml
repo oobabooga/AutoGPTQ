@@ -64,7 +64,7 @@ jobs:
           if (!(mamba list cuda)[-1].contains('cuda')) {sleep -s 10; mamba install -y 'cuda' $cudaChannels.TrimEnd().Split()}
           if (!(mamba list cuda)[-1].contains('cuda')) {throw 'CUDA Toolkit failed to install!'}
           
-          if ([version]$env:CUDAVER -lt [version]'11.8.0') {$torch = "torch==2.0.1"} else {$torch = "torch==2.1.0"}
+          if ([version]$env:CUDAVER -lt [version]'11.8.0') {$torch = "torch==2.0.1"} else {$torch = "torch==2.2.1"}
           
           python -m pip install --upgrade build setuptools wheel ninja numpy gekko pandas $torch --extra-index-url "https://download.pytorch.org/whl/cu$cudaVersionPytorch"
 
