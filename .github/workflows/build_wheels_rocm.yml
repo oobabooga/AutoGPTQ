@@ -25,8 +25,8 @@ jobs:
     runs-on: ubuntu-20.04
     strategy:
       matrix:
-        pyver: ["3.8", "3.9", "3.10", "3.11"]
-        rocm: ['5.4.2', '5.5', '5.6']
+        pyver: ["3.10", "3.11"]
+        rocm: ['5.5', '5.6']
     defaults:
       run:
         shell: pwsh
